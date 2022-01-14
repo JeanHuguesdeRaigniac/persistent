@@ -71,7 +71,7 @@ import qualified Database.PostgreSQL.Simple.Transaction as PG
 import qualified Database.PostgreSQL.Simple.Types as PG
 
 import Control.Arrow
-import Control.Exception (Exception, throw, throwIO)
+import Control.Exception (Exception, throw, throwIO, catches, Handler (Handler))
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.IO.Unlift (MonadIO(..), MonadUnliftIO)
@@ -119,6 +119,9 @@ import Database.Persist.Postgresql.Internal
 import Database.Persist.Sql
 import qualified Database.Persist.Sql.Util as Util
 import Database.Persist.SqlBackend
+import Database.PostgreSQL.Simple (SqlError)
+import System.IO (hPutStr, stderr)
+import Control.Concurrent (threadDelay)
 
 -- | A @libpq@ connection string.  A simple example of connection
 -- string would be @\"host=localhost port=5432 user=test
@@ -288,7 +291,12 @@ open'
     -- pass in 'withRawConnection'.
     -> ConnectionString -> LogFunc -> IO backend
 open' modConn getVer constructor cstr logFunc = do
-    conn <- PG.connectPostgreSQL cstr
+    conn <- fix $ \loop' ->
+        PG.connectPostgreSQL cstr `catches` [
+            Handler (\ (ex :: IOError) -> hPutStr stderr ("Warning: DB not ready (PQ.PollingFailed)" ++ ": " ++ show ex)
+                                             >> threadDelay 3000000 >> loop'),
+            Handler (\ (ex :: SqlError) -> hPutStr stderr ("Warning: DB not ready (fatalError)" ++ ": " ++ show ex)
+                                             >> threadDelay 3000000 >> loop')]
     modConn conn
     ver <- getVer conn
     smap <- newIORef $ Map.empty
